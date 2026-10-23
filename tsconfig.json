@@ -29,6 +29,6 @@
     ".next/types/**/*.ts",
     ".next/dev/types/**/*.ts",
     "**/*.mts"
-  ],
+,     "src/app/_app.jsx", "src/components/login-btn.jsx"  ],
   "exclude": ["node_modules"]
 }
