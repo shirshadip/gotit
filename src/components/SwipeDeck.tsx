@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { animated, useSpring } from "@react-spring/web";
 import TinderCard from "react-tinder-card";
 import Link from "next/link";
 
@@ -135,14 +134,6 @@ export default function SwipeDeck() {
   // Ids already swiped, so a card can never be decided twice
   const decided = useRef(new Set<string>());
   const matchTimer = useRef<number | undefined>(undefined);
-
-  const toast = useSpring({
-    opacity: matchOpen ? 1 : 0,
-    transform: matchOpen
-      ? "translateY(0px) scale(1)"
-      : "translateY(-12px) scale(0.96)",
-    config: { tension: 260, friction: 18 },
-  });
 
   useEffect(() => () => window.clearTimeout(matchTimer.current), []);
 
@@ -284,14 +275,17 @@ export default function SwipeDeck() {
 
       {/* Match toast */}
       <div className="pointer-events-none fixed inset-x-0 top-4 z-50 flex justify-center px-4">
-        <animated.div
-          style={toast}
+        <div
           role="status"
           aria-live="polite"
-          className="rounded-xl bg-rose-600 px-5 py-3 text-center font-semibold text-white shadow-lg"
+          className={`rounded-xl bg-rose-600 px-5 py-3 text-center font-semibold text-white shadow-lg transition-[opacity,transform] duration-200 ${
+            matchOpen
+              ? "translate-y-0 scale-100 opacity-100"
+              : "-translate-y-3 scale-[0.96] opacity-0"
+          }`}
         >
           It’s a match! You and {matchName} like each other.
-        </animated.div>
+        </div>
       </div>
 
       {error && (
