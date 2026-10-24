@@ -5,10 +5,20 @@ import {
   decisions,
   matchedIds,
 } from "@/app/lib/store";
+import { getAuthenticatedProfile } from "@/lib/auth/session";
 
 // export const runtime = "nodejs";
 
 export async function POST(request: NextRequest) {
+  const authenticatedProfile = await getAuthenticatedProfile();
+
+  if (!authenticatedProfile) {
+    return NextResponse.json(
+      { error: "Authentication required." },
+      { status: 401 },
+    );
+  }
+
   let body: { profileId?: unknown; action?: unknown };
 
   try {
