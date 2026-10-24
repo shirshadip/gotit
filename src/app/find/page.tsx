@@ -3,6 +3,7 @@ import Navbar from "@/components/Navbar";
 import SwipeDeck from "@/components/SwipeDeck";
 import { getAuthenticatedProfile } from "@/lib/auth/session";
 import { redirect } from "next/navigation";
+import ProfileSearch from "@/components/ProfileSearch";
 
 export default function FindPage() {
   return (
@@ -24,5 +25,5 @@ async function FindContent() {
     redirect("/login");
   }
 
-  return <SwipeDeck />;
+  return <> <ProfileSearch /> <SwipeDeck /> </> ;
 }

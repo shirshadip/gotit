@@ -3,12 +3,19 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { animated, useSpring } from "@react-spring/web";
 import TinderCard from "react-tinder-card";
-import type { Profile } from "@/app/lib/store";
+import Link from "next/link";
 
 type SwipeDirection = "left" | "right";
 type TinderCardHandle = {
   swipe: (direction?: SwipeDirection) => Promise<void>;
   restoreCard: () => Promise<void>;
+};
+
+type DeckProfile = {
+  id: string;
+  name: string;
+  bio: string;
+  profile_pic: string | null;
 };
 
 type DecisionResponse = {
@@ -17,28 +24,25 @@ type DecisionResponse = {
   profileId: string;
 };
 
-function isProfileList(value: unknown): value is Profile[] {
+const PROFILES_URL = "/api/profiles";
+const DECISION_URL = "/api/descision"; // keep this spelling in sync with your route folder
+const VISIBLE_CARDS = 3;
+
+function isProfileList(value: unknown): value is DeckProfile[] {
   return (
     Array.isArray(value) &&
     value.every(
-      (profile) =>
-        typeof profile === "object" &&
-        profile !== null &&
-        "id" in profile &&
-        typeof profile.id === "string" &&
-        "name" in profile &&
-        typeof profile.name === "string" &&
-        "age" in profile &&
-        typeof profile.age === "number" &&
-        "bio" in profile &&
-        typeof profile.bio === "string" &&
-        "interests" in profile &&
-        Array.isArray(profile.interests) &&
-        profile.interests.every(
-          (interest: unknown) => typeof interest === "string",
-        ) &&
-        "photo" in profile &&
-        typeof profile.photo === "string",
+      (p) =>
+        typeof p === "object" &&
+        p !== null &&
+        "id" in p &&
+        typeof p.id === "string" &&
+        "name" in p &&
+        typeof p.name === "string" &&
+        "bio" in p &&
+        typeof p.bio === "string" &&
+        "profile_pic" in p &&
+        (p.profile_pic === null || typeof p.profile_pic === "string"),
     )
   );
 }
@@ -56,38 +60,112 @@ function isDecisionResponse(value: unknown): value is DecisionResponse {
   );
 }
 
+function ProfileCard({
+  profile,
+  isTop,
+  hint,
+}: {
+  profile: DeckProfile;
+  isTop: boolean;
+  hint: SwipeDirection | null;
+}) {
+  const initial = (profile.name || "?").charAt(0).toUpperCase();
+
+  return (
+    <article
+      className={`flex h-full w-full select-none flex-col gap-3 rounded-3xl border-2 border-[#10739e] bg-[#b1ddf0] p-3 shadow-xl transition duration-300 ${
+        isTop ? "scale-100" : "translate-y-3 scale-[0.95] opacity-90"
+      }`}
+    >
+      {/* Photo */}
+      <div className="relative min-h-0 flex-1 overflow-hidden rounded-2xl bg-white">
+        {profile.profile_pic ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={profile.profile_pic}
+            alt={`${profile.name}'s profile`}
+            draggable={false}
+            className="pointer-events-none h-full w-full object-cover"
+          />
+        ) : (
+          <div className="flex h-full w-full items-center justify-center bg-slate-200 text-6xl font-semibold text-slate-400">
+            {initial}
+          </div>
+        )}
+
+        <span
+          className={`pointer-events-none absolute left-4 top-4 -rotate-12 rounded-lg border-4 border-emerald-500 bg-white/70 px-3 py-1 text-2xl font-extrabold tracking-widest text-emerald-600 transition-opacity duration-150 ${
+            isTop && hint === "right" ? "opacity-100" : "opacity-0"
+          }`}
+        >
+          LIKE
+        </span>
+        <span
+          className={`pointer-events-none absolute right-4 top-4 rotate-12 rounded-lg border-4 border-rose-500 bg-white/70 px-3 py-1 text-2xl font-extrabold tracking-widest text-rose-600 transition-opacity duration-150 ${
+            isTop && hint === "left" ? "opacity-100" : "opacity-0"
+          }`}
+        >
+          PASS
+        </span>
+      </div>
+
+      {/* Name */}
+      <div className="rounded-xl border-2 border-[#56517e] bg-[#d0cee2] px-4 py-2 text-center text-lg font-semibold text-slate-900">
+        <span className="block truncate">{profile.name}</span>
+      </div>
+
+      {/* Bio */}
+      <div className="h-24 overflow-hidden rounded-xl border border-[#36393d] bg-[#f9f7ed] px-4 py-3 text-sm leading-6 text-slate-700">
+        <p className="line-clamp-3 break-words">{profile.bio}</p>
+      </div>
+    </article>
+  );
+}
+
 export default function SwipeDeck() {
-  const [profiles, setProfiles] = useState<Profile[]>([]);
+  const [profiles, setProfiles] = useState<DeckProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
-  const cardRefs = useRef<Array<TinderCardHandle | null>>([]);
-  const [matchStyle, matchApi] = useSpring(() => ({
-    opacity: 0,
-    transform: "translateY(8px)",
-  }));
+  const [hint, setHint] = useState<SwipeDirection | null>(null);
+  const [matchName, setMatchName] = useState("");
+  const [matchOpen, setMatchOpen] = useState(false);
+
+  // Cards keyed by profile id (array indexes go stale as cards leave)
+  const cardRefs = useRef(new Map<string, TinderCardHandle>());
+  // Ids already swiped, so a card can never be decided twice
+  const decided = useRef(new Set<string>());
+  const matchTimer = useRef<number | undefined>(undefined);
+
+  const toast = useSpring({
+    opacity: matchOpen ? 1 : 0,
+    transform: matchOpen
+      ? "translateY(0px) scale(1)"
+      : "translateY(-12px) scale(0.96)",
+    config: { tension: 260, friction: 18 },
+  });
+
+  useEffect(() => () => window.clearTimeout(matchTimer.current), []);
 
   const fetchProfiles = useCallback(async () => {
-    const response = await fetch("/api/profiles");
+    const response = await fetch(PROFILES_URL);
     if (!response.ok) {
       throw new Error("Unable to load profiles. Please try again.");
     }
-
     const result: unknown = await response.json();
     if (!isProfileList(result)) {
       throw new Error("The profiles response was invalid.");
     }
-
     return result;
   }, []);
 
   const loadProfiles = useCallback(async () => {
     setLoading(true);
     setError("");
-
     try {
-      setProfiles(await fetchProfiles());
-      cardRefs.current = [];
+      const result = await fetchProfiles();
+      decided.current.clear();
+      cardRefs.current.clear();
+      setProfiles(result);
     } catch (loadError) {
       setError(
         loadError instanceof Error
@@ -125,20 +203,20 @@ export default function SwipeDeck() {
   }, [fetchProfiles]);
 
   const saveDecision = useCallback(
-    async (profileId: string, direction: string) => {
+    async (profile: DeckProfile, direction: string) => {
       const action = direction === "right" ? "like" : "pass";
       setError("");
-      setNotice("");
 
       try {
-        const response = await fetch("/api/descision", {
+        const response = await fetch(DECISION_URL, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ profileId, action }),
+          body: JSON.stringify({ profileId: profile.id, action }),
         });
 
+        const result: unknown = await response.json().catch(() => null);
+
         if (!response.ok) {
-          const result: unknown = await response.json();
           const message =
             typeof result === "object" &&
             result !== null &&
@@ -149,18 +227,15 @@ export default function SwipeDeck() {
           throw new Error(message);
         }
 
-        const result: unknown = await response.json();
         if (!isDecisionResponse(result)) {
           throw new Error("The decision response was invalid.");
         }
+
         if (result.success && result.matched) {
-          const profile = profiles.find((item) => item.id === profileId);
-          setNotice(`It’s a match! You and ${profile?.name ?? "someone"} like each other.`);
-          void matchApi.start({
-            opacity: 1,
-            transform: "translateY(0px)",
-            config: { tension: 260, friction: 18 },
-          });
+          setMatchName(profile.name || "someone");
+          setMatchOpen(true);
+          window.clearTimeout(matchTimer.current);
+          matchTimer.current = window.setTimeout(() => setMatchOpen(false), 4000);
         }
       } catch (saveError) {
         setError(
@@ -170,14 +245,28 @@ export default function SwipeDeck() {
         );
       }
     },
-    [matchApi, profiles],
+    [],
   );
 
-  const swipe = (direction: SwipeDirection) => {
-    const topCardIndex = profiles.length - 1;
-    const card = cardRefs.current[topCardIndex];
-    if (card) void card.swipe(direction);
+  const handleSwipe = (profile: DeckProfile, direction: string) => {
+    if (decided.current.has(profile.id)) return; // ignore double fires
+    decided.current.add(profile.id);
+    setHint(null);
+    void saveDecision(profile, direction);
   };
+
+  // Buttons: swipe the top card that hasn't already been decided
+  const swipe = (direction: SwipeDirection) => {
+    for (let i = profiles.length - 1; i >= 0; i--) {
+      const profile = profiles[i];
+      if (decided.current.has(profile.id)) continue;
+      void cardRefs.current.get(profile.id)?.swipe(direction);
+      return;
+    }
+  };
+
+  // Only mount the top few cards; the last item is the top of the stack
+  const visible = profiles.slice(-VISIBLE_CARDS);
 
   return (
     <section className="mx-auto w-full max-w-6xl px-5 py-12 sm:px-8 sm:py-16">
@@ -193,26 +282,17 @@ export default function SwipeDeck() {
         </p>
       </div>
 
-      {notice && (
-        <div className="relative mx-auto mt-6 max-w-md">
-          <animated.div
-            aria-hidden="true"
-            style={{
-              ...matchStyle,
-              position: "absolute",
-              inset: 0,
-              borderRadius: "0.75rem",
-              backgroundColor: "#fff1f2",
-            }}
-          />
-          <p
-            role="status"
-            className="relative rounded-xl bg-rose-50 px-4 py-3 text-center font-semibold text-rose-700"
-          >
-            {notice}
-          </p>
-        </div>
-      )}
+      {/* Match toast */}
+      <div className="pointer-events-none fixed inset-x-0 top-4 z-50 flex justify-center px-4">
+        <animated.div
+          style={toast}
+          role="status"
+          aria-live="polite"
+          className="rounded-xl bg-rose-600 px-5 py-3 text-center font-semibold text-white shadow-lg"
+        >
+          It’s a match! You and {matchName} like each other.
+        </animated.div>
+      </div>
 
       {error && (
         <div
@@ -234,12 +314,12 @@ export default function SwipeDeck() {
         {loading ? (
           <div
             role="status"
-            className="flex h-[min(530px,65dvh)] min-h-[410px] w-full max-w-[390px] items-center justify-center rounded-[26px] border border-slate-200 bg-white text-slate-500 shadow-sm"
+            className="flex h-[min(530px,65dvh)] min-h-[410px] w-full max-w-[390px] items-center justify-center rounded-3xl border border-slate-200 bg-white text-slate-500 shadow-sm"
           >
             Finding people for you...
           </div>
         ) : profiles.length === 0 ? (
-          <div className="flex min-h-[300px] w-full max-w-[390px] flex-col items-center justify-center rounded-[26px] border border-slate-200 bg-white px-8 text-center shadow-sm">
+          <div className="flex min-h-[300px] w-full max-w-[390px] flex-col items-center justify-center rounded-3xl border border-slate-200 bg-white px-8 text-center shadow-sm">
             <span className="text-4xl text-rose-500" aria-hidden="true">✦</span>
             <h2 className="mt-4 text-xl font-semibold text-slate-900">
               You’re all caught up
@@ -257,18 +337,25 @@ export default function SwipeDeck() {
           </div>
         ) : (
           <>
-            <div className="relative h-[min(530px,65dvh)] min-h-[410px] w-full max-w-[390px]">
-              {profiles.map((profile, index) => (
+          <Link href={`/user/${visible[visible.length - 1].id}`} className="w-full">
+            <div className="relative h-[min(530px,65dvh)] min-h-[410px] w-full max-w-[390px] hover:cursor-grab active:cursor-grabbing">
+              {visible.map((profile, index) => (
                 <TinderCard
                   key={profile.id}
                   ref={(instance) => {
-                    cardRefs.current[index] = instance;
+                    if (instance) cardRefs.current.set(profile.id, instance);
+                    else cardRefs.current.delete(profile.id);
                   }}
                   className="absolute inset-0"
-                  onSwipe={(direction) => {
-                    void saveDecision(profile.id, direction);
+                  onSwipe={(direction) => handleSwipe(profile, direction)}
+                  onSwipeRequirementFulfilled={(direction) => {
+                    if (direction === "left" || direction === "right") {
+                      setHint(direction);
+                    }
                   }}
+                  onSwipeRequirementUnfulfilled={() => setHint(null)}
                   onCardLeftScreen={() => {
+                    cardRefs.current.delete(profile.id);
                     setProfiles((current) =>
                       current.filter((item) => item.id !== profile.id),
                     );
@@ -277,46 +364,21 @@ export default function SwipeDeck() {
                   swipeRequirementType="position"
                   swipeThreshold={100}
                 >
-                  <article className="profile-card !absolute !inset-0 !h-full !w-full !max-w-none">
-                    {/* Profile photos are remote URLs supplied by the demo profile data. */}
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={profile.photo}
-                      alt={`${profile.name}'s profile`}
-                      className="profile-photo"
-                    />
-                    <div className="profile-gradient" />
-                    <span className="demo-badge">SAY HELLO</span>
-                    <div className="profile-details">
-                      <h2>
-                        {profile.name}, {profile.age}
-                      </h2>
-                      <p>{profile.bio}</p>
-                      <div className="interest-list">
-                        {profile.interests.map((interest) => (
-                          <span key={interest}>{interest}</span>
-                        ))}
-                      </div>
-                    </div>
-                    <div className="pointer-events-none absolute left-0 right-0 top-6 flex justify-center gap-3 text-lg font-extrabold uppercase tracking-widest">
-                      <span className="rounded-lg border-2 border-rose-300 bg-rose-950/50 px-3 py-1 text-rose-200">
-                        Pass
-                      </span>
-                      <span className="rounded-lg border-2 border-emerald-300 bg-emerald-950/50 px-3 py-1 text-emerald-200">
-                        Like
-                      </span>
-                    </div>
-                  </article>
+                  <ProfileCard
+                    profile={profile}
+                    isTop={index === visible.length - 1}
+                    hint={hint}
+                  />
                 </TinderCard>
               ))}
             </div>
-
+            </Link>
             <div className="mt-7 flex items-center justify-center gap-5">
               <button
                 type="button"
                 onClick={() => swipe("left")}
                 aria-label="Pass on this profile"
-                className="flex size-14 items-center justify-center rounded-full border border-rose-200 bg-white text-2xl text-rose-600 shadow-md transition hover:scale-105 hover:bg-rose-50"
+                className="flex size-14 items-center justify-center rounded-full border border-rose-200 bg-white text-2xl text-rose-600 shadow-md transition hover:scale-105 hover:bg-rose-50 active:scale-95"
               >
                 <span aria-hidden="true">×</span>
               </button>
@@ -324,7 +386,7 @@ export default function SwipeDeck() {
                 type="button"
                 onClick={() => swipe("right")}
                 aria-label="Like this profile"
-                className="flex size-16 items-center justify-center rounded-full bg-rose-600 text-2xl text-white shadow-lg shadow-rose-600/25 transition hover:scale-105 hover:bg-rose-700"
+                className="flex size-16 items-center justify-center rounded-full bg-rose-600 text-2xl text-white shadow-lg shadow-rose-600/25 transition hover:scale-105 hover:bg-rose-700 active:scale-95"
               >
                 <span aria-hidden="true">♥</span>
               </button>
