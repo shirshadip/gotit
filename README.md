@@ -1,5 +1,13 @@
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
+## Contributing
+
+Contributions are welcome! See [CONTRIBUTING.md](./CONTRIBUTING.md) for setup and pull request guidance.
+
+## License
+
+This project is licensed under the [MIT License](./LICENSE).
+
 ## Getting Started
 
 First, run the development server:
